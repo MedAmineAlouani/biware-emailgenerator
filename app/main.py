@@ -8,23 +8,22 @@ import joblib
 def process_raw_data(raw_data):
     try:
         og_data = pd.read_csv('app/resource/Lead Qualification Data.csv')
-        og_data.drop(columns=['Output'],inplace=True)
-        matched_indices = og_data[og_data['Contact'].isin(raw_data['Contact'])].index.tolist()
+        og_data.drop(columns=['Output'], inplace=True)
+        raw_data.index = range(og_data.index.max() + 1, og_data.index.max() + 1 + len(raw_data))
+        og_data = pd.concat([og_data, raw_data])
         og_data_eng = feature_engineering(og_data.copy())
-        matched_data_eng = og_data_eng.loc[matched_indices]
-        st.info("Predicting qualified leads using the model...")
+        st.info("Prédiction des prospects qualifiés à l'aide du modèle AI...🧠 ")
         model = joblib.load("lead_qual_model.pkl")
-        predictions = model.predict(matched_data_eng)
-        matched_data_eng['Predictions'] = predictions
-        st.write("Prediction value counts:")
-        st.write(matched_data_eng['Predictions'].value_counts())
-
-        qualified_leads = matched_data_eng[matched_data_eng['Predictions'] == 1]
-        st.write(f"Qualified leads found: {len(qualified_leads)}")
+        predictions = model.predict(og_data_eng)
+        og_data_eng['Predictions'] = predictions
+        raw_data_predictions = og_data_eng.loc[raw_data.index, 'Predictions']
+        st.write("Prediction value counts (raw_data only):")
+        st.write(raw_data_predictions.value_counts())
+        qualified_leads = og_data.loc[raw_data_predictions.index][raw_data_predictions == 1]
+        st.write(f"Prospects qualifiés trouvés : {len(qualified_leads)}")
         if qualified_leads.empty:
-            st.warning("No qualified leads were found.")
-            return pd.DataFrame()  # Return an empty DataFrame
-
+            st.warning("Aucun prospect qualifié n'a été trouvé. 😔")
+            return pd.DataFrame()
         email_data = og_data.loc[qualified_leads.index, ['Contact', 'Fonction', 'Société']]
         email_data.rename(columns={
             'Contact': 'Name',
@@ -35,79 +34,136 @@ def process_raw_data(raw_data):
         email_data.to_csv('app/resource/email_data.csv', index=False)
         return email_data
     except Exception as e:
-        st.error(f"An Error Occurred: {e}")
+        st.error(f"Une erreur est survenue :{e}")
         return pd.DataFrame()
+
 
 def create_streamlit_app(llm):
     # Add a custom header image/logo
-    st.image("app/resource/Biware.png", use_column_width=True)  # Replace with your image path or URL
+    st.image("app/resource/Biware.png", use_column_width=True)
     st.title("📧 Biware Lead Qualification & Email Generator")
 
-    # Step 1: Upload raw CSV file
-    file_upload = st.file_uploader("Upload your raw CSV file with client data:", type="csv")
+    # Step 1: Choose mode of operation
+    mode = st.radio(
+        "Choisissez un mode d'opération :",
+        options=["Qualification des prospects et génération d'emails", "Passer la qualification des prospects", "Saisir les détails manuellement"]
+    )
 
     # Step 2: Select email type
     email_type = st.selectbox(
-        "Select the type of email to generate:",
-        ["Cold Outreach", "Follow-Up", "Thank You Email", "Proposal Email"]
+        "Sélectionnez le type d'email à générer :",
+        ["Email de Prospection", "Email de Relance", "Remerciement", "Proposition", "Proposition de formation"]
     )
 
-    if file_upload:
-        try:
-            # Load raw CSV data
-            raw_data = pd.read_csv(file_upload)
+    if mode == "Qualification des prospects et génération d'emails":
+        # Upload raw CSV file
+        file_upload = st.file_uploader("Téléchargez votre fichier CSV brut avec les données des clients :", type="csv")
 
-            # Display the head of the uploaded raw data
-            st.info("Uploaded Raw Data Preview:")
-            st.write(raw_data.head())
+        if file_upload:
+            try:
+                # Loading the raw CSV data
+                raw_data = pd.read_csv(file_upload)
 
-            # Ensure required columns are present in raw data
-            required_columns = ["Contact", "Fonction", "Société", "Secteur", "Pays"]
-            if not all(col in raw_data.columns for col in required_columns):
-                st.error(f"The CSV file must include the following columns: {', '.join(required_columns)}")
-                return
+                # Displaying the uploaded raw data
+                st.info("Aperçu des données brutes téléchargées :")
+                st.write(raw_data.head())
 
-            # Step 3: Process raw data through Lead Qualification
-            st.info("Processing data with Lead Qualification...")
-            email_data = process_raw_data(raw_data)
+                # Make sure data is in the right format
+                required_columns = ["Contact", "Fonction", "Société", "Secteur", "Pays"]
+                if not all(col in raw_data.columns for col in required_columns):
+                    st.error(f"Le fichier CSV doit inclure les colonnes suivantes : {', '.join(required_columns)}")
+                    return
 
-            # Display qualified leads for email generation
-            if email_data.empty:
-                st.warning("No qualified leads were found in the uploaded data.")
-                return
+                # Process raw data through Lead Qualification
+                st.info("Traitement des données avec la qualification des prospects...⚙️")
+                email_data = process_raw_data(raw_data)
 
-            st.success("Lead Qualification completed. Displaying qualified leads:")
-            st.write(email_data.head(20))
-            # Step 4: Generate Emails
-            st.info("Generating emails...")
-            all_emails = []
-            for _, client in email_data.iterrows():
-                job_description = {
-                    "Contact": client["Name"],
-                    "Job": client["Job"],
-                    "Company": client["Company"],
-                    "EmailType": email_type  # Pass email type to the LLM
-                }
-                email = llm.write_mail(job_description)
-                all_emails.append(email)
+                # Display qualified leads for email generation
+                if email_data.empty:
+                    st.warning("Aucun prospect qualifié n'a été trouvé dans les données téléchargées. 😞 ")
+                    return
 
-                # Display each generated email
-                st.subheader(f"Generated {email_type} for {client['Name']}:")
-                st.code(email, language="markdown")
+                st.success("Qualification des prospects terminée. Affichage des prospects qualifiés :")
+                st.write(email_data.head(20))
 
-            # Allow download of all emails as .txt
-            if all_emails:
-                emails_combined = "\n\n".join(all_emails)
-                st.download_button(
-                    label="📥 Download All Emails as .txt",
-                    data=emails_combined,
-                    file_name=f"{email_type.lower().replace(' ', '_')}_emails.txt",
-                    mime="text/plain"
-                )
-        except Exception as e:
-            st.error(f"An Error Occurred: {e}")
+                # Generate Emails
+                st.info("Génération des emails... ")
+                generate_emails(email_data, email_type, llm)
+            except Exception as e:
+                st.error(f"An Error Occurred: {e}")
+
+    elif mode == "Passer la qualification des prospects":
+        # Upload raw CSV file
+        file_upload = st.file_uploader("Upload your raw CSV file with client data:", type="csv")
+
+        if file_upload:
+            try:
+                # Loading the raw CSV data
+                raw_data = pd.read_csv(file_upload)
+
+                # Ensure required columns are present
+                required_columns = ["Contact", "Fonction", "Société"]
+                if not all(col in raw_data.columns for col in required_columns):
+                    st.error(f"Le fichier CSV doit inclure les colonnes suivantes : {', '.join(required_columns)}")
+                    return
+
+                # Use raw_data directly for email generation
+                st.info("Passage de la qualification des prospects. Utilisation des données téléchargées pour la génération des emails.")
+                email_data = raw_data.rename(columns={
+                    'Contact': 'Name',
+                    'Fonction': 'Job',
+                    'Société': 'Company'
+                })
+                generate_emails(email_data, email_type, llm)
+            except Exception as e:
+                st.error(f"An Error Occurred: {e}")
+
+    elif mode == "Saisir les détails manuellement":
+        # Manual input for Name, Job, and Company
+        st.info("Saisissez les détails pour la génération manuelle des emails :")
+        name = st.text_input("Nom")
+        job = st.text_input("Fonction")
+        company = st.text_input("Société")
+
+        if st.button("Générer un email 📩 "):
+            if name and job and company:
+                email_data = pd.DataFrame([{'Name': name, 'Job': job, 'Company': company}])
+                generate_emails(email_data, email_type, llm)
+            else:
+                st.error("Veuillez remplir tous les champs : Nom, Poste et Entreprise.")
+
+
+def generate_emails(email_data, email_type, llm):
+    try:
+        all_emails = []
+        for _, client in email_data.iterrows():
+            job_description = {
+                "Contact": client["Name"],
+                "Job": client["Job"],
+                "Company": client["Company"],
+                "EmailType": email_type
+            }
+            email = llm.write_mail(job_description)
+            all_emails.append(email)
+
+            # Display each generated email
+            st.subheader(f"Generated {email_type} for {client['Name']}:")
+            st.code(email, language="markdown")
+
+        # Download of all emails as .txt
+        if all_emails:
+            emails_combined = "\n\n".join(all_emails)
+            st.download_button(
+                label="📥 Télécharger tous les emails au format .txt",
+                data=emails_combined,
+                file_name=f"{email_type.lower().replace(' ', '_')}_emails.txt",
+                mime="text/plain"
+            )
+    except Exception as e:
+        st.error(f"Une erreur est survenue lors de la génération de l'email : {e}")
+
 
 if __name__ == "__main__":
     chain = Chain()
-    st.set_page_config(layout="wide", page_title="Cold Email Generator for Biware", page_icon="📧")
+    st.set_page_config(layout="wide", page_title="Email Generator for Biware", page_icon="📧")
     create_streamlit_app(chain)
