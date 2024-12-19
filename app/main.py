@@ -46,7 +46,7 @@ def create_streamlit_app(llm):
     # Step 1: Choose mode of operation
     mode = st.radio(
         "Choisissez un mode d'opération :",
-        options=["Qualification des prospects et génération d'emails", "Passer la qualification des prospects", "Saisir les détails manuellement"]
+        options=["Qualification des prospects et génération d'emails", "Passer la qualification des prospects","Scraper un site web pour générer des emails", "Saisir les détails manuellement"]
     )
 
     # Step 2: Select email type
@@ -54,6 +54,8 @@ def create_streamlit_app(llm):
         "Sélectionnez le type d'email à générer :",
         ["Email de Prospection", "Email de Relance", "Remerciement", "Proposition", "Proposition de formation"]
     )
+
+
 
     if mode == "Qualification des prospects et génération d'emails":
         # Upload raw CSV file
@@ -88,9 +90,11 @@ def create_streamlit_app(llm):
 
                 # Generate Emails
                 st.info("Génération des emails... ")
-                generate_emails(email_data, email_type, llm)
+                generate_emails(email_type,llm,mode,email_data)
             except Exception as e:
                 st.error(f"An Error Occurred: {e}")
+
+
 
     elif mode == "Passer la qualification des prospects":
         # Upload raw CSV file
@@ -114,9 +118,11 @@ def create_streamlit_app(llm):
                     'Fonction': 'Job',
                     'Société': 'Company'
                 })
-                generate_emails(email_data, email_type, llm)
+                generate_emails(email_type,llm,mode,email_data)
             except Exception as e:
                 st.error(f"An Error Occurred: {e}")
+
+
 
     elif mode == "Saisir les détails manuellement":
         # Manual input for Name, Job, and Company
@@ -128,12 +134,45 @@ def create_streamlit_app(llm):
         if st.button("Générer un email 📩 "):
             if name and job and company:
                 email_data = pd.DataFrame([{'Name': name, 'Job': job, 'Company': company}])
-                generate_emails(email_data, email_type, llm)
+                generate_emails(email_type,llm,mode,email_data)
             else:
                 st.error("Veuillez remplir tous les champs : Nom, Poste et Entreprise.")
 
 
-def generate_emails(email_data, email_type, llm):
+
+    elif mode == "Scraper un site web pour générer des emails":
+        url = st.text_input("Entrez l'URL de la page de carrière ou d'emploi :")
+        if st.button("Scraper et générer des emails"):
+            try:
+                st.info("Scraping en cours... 🌐")
+                scraped_text = llm.scrape_website(url)
+                jobs = llm.extract_jobs(scraped_text)
+
+                if not jobs:
+                    st.warning("Aucun job n'a été extrait de cette URL. Vérifiez le contenu.")
+                    return
+
+                for index, job in enumerate(jobs):
+                    # Display job details and generate email
+                    st.subheader(f"Détails du job :")
+                    st.write(f"**Rôle**: {job.get('role', 'Non fourni')}")
+                    st.write(f"**Entreprise**: {job.get('company', 'Non fourni')}")
+                    st.write(
+                        f"**Contact**: {job.get('contact_name', 'Responsable du recrutement')} ({job.get('contact_job_title', 'Non fourni')})")
+                    st.write(f"**Expérience requise**: {job.get('experience', 'Non fourni')}")
+                    st.write(
+                        f"**Compétences**: {', '.join(job.get('skills', [])) if job.get('skills') else 'Non fourni'}")
+                    st.write("**Description**:")
+                    st.write(job.get('description', 'Non fourni'))
+
+                    # Generate email automatically after displaying job details
+                    st. info(f"Génération de l'email pour le job {job.get('role', 'Non fourni')}... 📩")
+                    email= llm.write_mail_url(job, email_type)
+                    st.code(email, language="markdown")
+            except Exception as e:
+                st.error(f"Une erreur est survenue lors du scraping ou de la génération de l'email : {e}")
+
+def generate_emails(email_type, llm, mode, email_data=pd.DataFrame([]), job=[]):
     try:
         all_emails = []
         for _, client in email_data.iterrows():
